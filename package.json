@@ -1,0 +1,15 @@
+{
+  "name": "terefere",
+  "version": "1.0.0",
+  "private": true,
+  "description": "terefere — giełda walut z kursami na żywo (LSE) i symulacją rynku",
+  "type": "module",
+  "scripts": {
+    "start": "node server/index.js",
+    "test": "node --test server/*.test.js"
+  },
+  "engines": { "node": ">=22" },
+  "dependencies": {
+    "lightweight-charts": "^5.2.1"
+  }
+}
