@@ -30,7 +30,7 @@ const S = {
   rules: { account: 'PLN', fee: 0.001, marginFee: 0.0001, maxLeverage: 100, closeOut: 0.5 },
   symbol: store.get('symbol', 'EUR_PLN'), range: store.get('range', '1D'), display: store.get('display', 'PLN'),
   tab: store.get('tab', 'positions'), kind: store.get('kind', 'spot'), leverage: Number(store.get('leverage', 10)) || 10,
-  view: 'chart', style: 'candle', side: 'buy', type: 'market', notes: [],
+  view: 'chart', style: 'candle', side: 'buy', type: 'market', notes: [], editing: null, draft: { sl: '', tp: '' },
 };
 if (!RANGES.includes(S.range)) S.range = '1D';
 
@@ -49,6 +49,9 @@ const label = (s) => s.replace('_', '/');
 const names = (s) => s.split('_').map((c) => CCY[c][0]).join(' / ');
 const parse = (v) => Number(String(v).replace(/\s/g, '').replace(',', '.'));
 const inputNum = (x, d) => fmt(x, d).replace(/\s/g, '');
+// Optional price field: empty means none; unparsable text goes to the server as-is so it can say what is wrong.
+const optPrice = (v) => (String(v).trim() === '' ? null : Number.isFinite(parse(v)) ? parse(v) : String(v));
+const attr = (v) => String(v).replace(/[&"<]/g, (c) => ({ '&': '&amp;', '"': '&quot;', '<': '&lt;' })[c]);
 const coin = (c, cls = '') => `<span class="coin ${cls}" style="background:${CCY[c][2]}">${CCY[c][1]}</span>`;
 const coins = (s, cls = '') => `<span class="coins ${cls}">${s.split('_').map((c) => coin(c)).join('')}</span>`;
 const time = (t) => new Date(t).toLocaleString('pl-PL', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' });
@@ -66,6 +69,8 @@ const toAccount = (x, c) => convert(x, c, S.rules.account);
 const dir = (p) => (p.side === 'long' ? 1 : -1);
 const sideWord = (o) => (o.leverage ? `${o.side === 'buy' ? 'Long' : 'Short'} ${o.leverage}×` : o.side === 'buy' ? 'Kupno' : 'Sprzedaż');
 const liqPrice = (p) => p.entry * (1 - (dir(p) * (1 - S.rules.closeOut)) / p.leverage);
+// Result in the account currency if a position of `amount` opened at `entry` closed at `price` (fees left out).
+const pnlAt = (long, entry, price, amount, quote) => (price - entry) * (long ? 1 : -1) * amount * toAccount(1, quote);
 function livePnl(p) {
   const q = S.quotes[p.symbol];
   if (!q) return null;
@@ -181,6 +186,8 @@ function drawLines() {
     if (p.status !== 'open' || p.symbol !== S.symbol) continue;
     add(p.entry, p.side === 'long' ? GREEN : RED, `${p.side === 'long' ? 'Long' : 'Short'} ${p.leverage}×`, LineStyle.Solid);
     add(liqPrice(p), AMBER, 'Likwidacja');
+    if (p.sl != null) add(p.sl, RED, 'Stop loss');
+    if (p.tp != null) add(p.tp, GREEN, 'Take profit');
   }
   for (const o of a.orders) if (o.status === 'open' && o.symbol === S.symbol) add(o.price, BLUE, `${KIND[o.type]} · ${sideWord(o).toLowerCase()}`);
 }
@@ -328,6 +335,12 @@ function renderForm() {
       [buy ? 'Zapłacisz' : 'Otrzymasz', show(buy ? value + fee : value - fee, f.quote)],
     ];
   }
+  for (const k of ['sl', 'tp']) {
+    const v = optPrice($(`${k}In`).value);
+    const x = f.margin && ok && typeof v === 'number' ? pnlAt(buy, f.price, v, f.amount, f.quote) : null;
+    $(`${k}Hint`).textContent = x === null ? '' : `≈ ${sign(x)}${money(x, A)}`;
+    $(`${k}Hint`).className = x === null ? '' : tone(x);
+  }
   $('summary').innerHTML = rows.map(([k, v, cls]) => `<div class="${cls ?? ''}"><dt>${k}</dt><dd>${v}</dd></div>`).join('');
   $('submit').textContent = f.margin ? `Otwórz ${buy ? 'long' : 'short'} ${f.lev}× ${label(f.s)}` : `${buy ? 'Kup' : 'Sprzedaj'} ${f.base}`;
   $('submit').classList.toggle('sell', !buy);
@@ -368,7 +381,25 @@ function posCard(p) {
       <div><dt>Likwidacja ≈</dt><dd class="liq">${fmt(liqPrice(p), d)}</dd></div>
     </dl>
     <div class="meter">${posMeter(p)}</div>
+    ${sltpRow(p)}
   </article>`;
+}
+
+function sltpRow(p) {
+  if (S.editing === p.id) {
+    return `<div class="sltp">
+      <label>Stop loss <input data-edit="sl" inputmode="decimal" placeholder="brak" autocomplete="off" value="${attr(S.draft.sl)}"></label>
+      <label>Take profit <input data-edit="tp" inputmode="decimal" placeholder="brak" autocomplete="off" value="${attr(S.draft.tp)}"></label>
+      <span class="actions"><button type="button" class="btn-ghost ok" data-save="${p.id}">Zapisz</button><button type="button" class="btn-ghost" data-edit-cancel>Anuluj</button></span>
+    </div>`;
+  }
+  const part = (name, v) => {
+    if (v == null) return `<span>${name}<b>—</b></span>`;
+    const x = pnlAt(p.side === 'long', p.entry, v, p.amount, p.symbol.split('_')[1]);
+    return `<span>${name}<b>${fmt(v, digits(p.symbol))}</b> <span class="${tone(x)}">≈ ${sign(x)}${money(x, S.rules.account)}</span></span>`;
+  };
+  const none = p.sl == null && p.tp == null;
+  return `<div class="sltp">${part('Stop loss', p.sl)}${part('Take profit', p.tp)}<button type="button" class="btn-ghost ok set" data-edit-open="${p.id}">${none ? 'Ustaw SL / TP' : 'Zmień SL / TP'}</button></div>`;
 }
 
 function orderNow(o) {
@@ -383,7 +414,7 @@ function ordersTable(list) {
   return `<div class="card table-wrap"><table class="tbl"><thead><tr><th>Para</th><th>Typ</th><th>Strona</th><th class="n">Ilość</th><th class="n">Cena</th><th class="n">Teraz</th><th class="n">Do aktywacji</th><th></th></tr></thead><tbody>
     ${list.map((o) => {
       const [now, dist] = orderNow(o);
-      return `<tr data-order="${o.id}"><td><span class="pair">${coins(o.symbol, 'sm')}${label(o.symbol)}</span></td><td>${KIND[o.type]}</td><td class="${o.side === 'buy' ? 'up' : 'down'}">${sideWord(o)}</td><td class="n">${fmt(o.amount)} ${o.symbol.split('_')[0]}</td><td class="n">${fmt(o.price, digits(o.symbol))}</td><td class="n" data-now>${now}</td><td class="n" data-dist>${dist}</td><td class="n"><button type="button" class="btn-ghost" data-cancel="${o.id}">Anuluj</button></td></tr>`;
+      return `<tr data-order="${o.id}"><td><span class="pair">${coins(o.symbol, 'sm')}${label(o.symbol)}</span></td><td>${KIND[o.type]}</td><td class="${o.side === 'buy' ? 'up' : 'down'}">${sideWord(o)}${o.sl != null || o.tp != null ? `<small>SL ${o.sl == null ? '—' : fmt(o.sl, digits(o.symbol))} · TP ${o.tp == null ? '—' : fmt(o.tp, digits(o.symbol))}</small>` : ''}</td><td class="n">${fmt(o.amount)} ${o.symbol.split('_')[0]}</td><td class="n">${fmt(o.price, digits(o.symbol))}</td><td class="n" data-now>${now}</td><td class="n" data-dist>${dist}</td><td class="n"><button type="button" class="btn-ghost" data-cancel="${o.id}">Anuluj</button></td></tr>`;
     }).join('')}</tbody></table></div>`;
 }
 
@@ -402,7 +433,7 @@ function historyTable(a, mine) {
     let price;
     let result;
     if (p) {
-      what = `<span class="badge ${p.side}">${p.side === 'long' ? 'Long' : 'Short'} ${p.leverage}×</span> ${p.status === 'liquidated' ? '<span class="badge liquidated">Likwidacja</span>' : 'zamknięta'}`;
+      what = `<span class="badge ${p.side}">${p.side === 'long' ? 'Long' : 'Short'} ${p.leverage}×</span> ${{ margin: '<span class="badge liquidated">Likwidacja</span>', sl: '<span class="badge sl">Stop loss</span>', tp: '<span class="badge tp">Take profit</span>' }[p.reason ?? (p.status === 'liquidated' ? 'margin' : '')] ?? 'zamknięta'}`;
       price = `${fmt(p.entry, d)} → ${fmt(p.exit, d)}`;
       result = `<span class="${tone(p.pnl)}">${sign(p.pnl)}${money(p.pnl, A)}</span>`;
     } else if (o.status === 'filled') {
@@ -432,12 +463,15 @@ function renderActivity() {
     b.classList.toggle('on', b.dataset.tab === S.tab);
     b.setAttribute('aria-selected', b.dataset.tab === S.tab);
   });
+  const focused = document.activeElement?.dataset?.edit;
+  if (!a.positions.some((p) => p.id === S.editing && p.status === 'open')) S.editing = null;
   $('activityBody').innerHTML =
     S.tab === 'positions'
       ? positions.length ? `<div class="list">${positions.map(posCard).join('')}</div>` : emptyCard('Brak otwartych pozycji', 'Przełącz panel zlecenia na „Dźwignia”, aby zarabiać na wzroście (long) albo spadku (short) kursu, z depozytem w PLN.')
       : S.tab === 'orders'
         ? orders.length ? ordersTable(orders) : emptyCard('Brak oczekujących zleceń', 'Zlecenie Limit albo Stop wykona się samo, gdy kurs dojdzie do podanej ceny.')
         : historyTable(a, mine);
+  if (focused) $('activityBody').querySelector(`[data-edit="${focused}"]`)?.focus();
 }
 
 // Live values inside the activity list, updated in place so buttons keep focus.
@@ -513,6 +547,7 @@ function selectPair(s, chartToo = true) {
   $('price').className = 'price';
   $('searchList').hidden = true;
   $('search').value = '';
+  $('slIn').value = $('tpIn').value = '';
   prefillPrice();
   renderTicker();
   renderForm();
@@ -633,6 +668,7 @@ pick('[data-kind]', 'kind', (v) => {
 });
 pick('[data-side]', 'side', (v) => {
   S.side = v;
+  $('slIn').value = $('tpIn').value = ''; // a long's stop loss is a short's take profit
   prefillPrice();
   renderForm();
 });
@@ -661,6 +697,8 @@ document.querySelectorAll('[data-lev]').forEach((b) => (b.onclick = () => {
   $('levIn').oninput();
 }));
 $('amountIn').oninput = renderForm;
+$('slIn').oninput = renderForm;
+$('tpIn').oninput = renderForm;
 $('priceIn').oninput = renderForm;
 document.querySelectorAll('[data-pct]').forEach((b) => (b.onclick = () => {
   const f = formState();
@@ -685,13 +723,16 @@ $('trade').onsubmit = async (e) => {
   try {
     const o = await api('/api/orders', {
       method: 'POST',
-      body: JSON.stringify({ symbol: f.s, side: S.side, type: S.type, amount: f.amount, price: S.type === 'market' ? undefined : f.price, leverage: f.lev ?? undefined }),
+      body: JSON.stringify({
+        symbol: f.s, side: S.side, type: S.type, amount: f.amount, price: S.type === 'market' ? undefined : f.price,
+        ...(f.margin && { leverage: f.lev, sl: optPrice($('slIn').value), tp: optPrice($('tpIn').value) }),
+      }),
     });
     if (o.status === 'filled') toast(o.leverage ? `Otwarto pozycję: ${describe(o)}` : `Zrealizowano: ${describe(o)}`);
     else toast(`Przyjęto zlecenie ${KIND[o.type]}: ${describe(o)}`);
     if (o.leverage && o.status === 'filled' && S.tab !== 'positions') document.querySelector('[data-tab="positions"]').click();
     if (o.status === 'open' && S.tab !== 'orders') document.querySelector('[data-tab="orders"]').click();
-    $('amountIn').value = '';
+    $('amountIn').value = $('slIn').value = $('tpIn').value = '';
   } catch (err) {
     $('formErr').textContent = err.message;
   } finally {
@@ -702,6 +743,35 @@ $('trade').onsubmit = async (e) => {
 
 $('onlyPair').onchange = renderActivity;
 $('activityBody').onclick = async (e) => {
+  const open = e.target.closest('[data-edit-open]');
+  if (open) {
+    const p = S.account.positions.find((x) => x.id === Number(open.dataset.editOpen));
+    const d = digits(p.symbol);
+    S.editing = p.id;
+    S.draft = { sl: p.sl == null ? '' : inputNum(p.sl, d), tp: p.tp == null ? '' : inputNum(p.tp, d) };
+    renderActivity();
+    $('activityBody').querySelector('[data-edit="sl"]').focus();
+    return;
+  }
+  if (e.target.closest('[data-edit-cancel]')) {
+    S.editing = null;
+    renderActivity();
+    return;
+  }
+  const save = e.target.closest('[data-save]');
+  if (save) {
+    save.disabled = true;
+    try {
+      await api(`/api/positions/${save.dataset.save}/protect`, { method: 'POST', body: JSON.stringify({ sl: optPrice(S.draft.sl), tp: optPrice(S.draft.tp) }) });
+      S.editing = null;
+      renderActivity();
+      toast('Zapisano stop loss i take profit');
+    } catch (err) {
+      toast(err.message, 'err');
+      save.disabled = false;
+    }
+    return;
+  }
   const b = e.target.closest('[data-cancel], [data-close]');
   if (!b) return;
   b.disabled = true;
@@ -718,6 +788,46 @@ $('activityBody').onclick = async (e) => {
     b.disabled = false;
   }
 };
+$('activityBody').oninput = (e) => {
+  if (e.target.dataset.edit) S.draft[e.target.dataset.edit] = e.target.value;
+};
+$('activityBody').onkeydown = (e) => {
+  if (!e.target.dataset.edit) return;
+  if (e.key === 'Enter') $('activityBody').querySelector('[data-save]')?.click();
+  if (e.key === 'Escape') $('activityBody').querySelector('[data-edit-cancel]')?.click();
+};
+
+// Left rail: highlights the section in view; a click jumps there and briefly outlines it.
+const railLinks = [...document.querySelectorAll('.rail a')];
+let spyPause = 0;
+function setRail(link) {
+  for (const a of railLinks) {
+    a.classList.toggle('on', a === link);
+    if (a === link) a.setAttribute('aria-current', 'true');
+    else a.removeAttribute('aria-current');
+  }
+}
+function railSpy() {
+  let active = railLinks[0];
+  let best = -Infinity;
+  for (const a of railLinks) {
+    const top = document.querySelector(a.hash).getBoundingClientRect().top;
+    if (top <= innerHeight * 0.35 && top > best) [active, best] = [a, top];
+  }
+  setRail(active);
+}
+addEventListener('scroll', () => { if (Date.now() > spyPause) later(railSpy); }, { passive: true });
+for (const a of railLinks) {
+  a.onclick = () => {
+    setRail(a);
+    spyPause = Date.now() + 1000;
+    const el = document.querySelector(a.hash);
+    el.classList.remove('flash');
+    void el.offsetWidth; // restart the animation
+    el.classList.add('flash');
+  };
+}
+
 $('reset').onclick = async () => {
   if (!confirm('Zacząć od nowa? Saldo wróci do 100 000 PLN, a zlecenia i pozycje zostaną usunięte.')) return;
   await api('/api/reset', { method: 'POST' }).catch((err) => toast(err.message, 'err'));
@@ -753,9 +863,10 @@ function connect() {
     if (o.status === 'filled') toast(`${o.leverage ? 'Otwarto pozycję' : 'Zrealizowano zlecenie'} ${KIND[o.type]}: ${describe(o)}`);
     else toast(`Odrzucono zlecenie ${KIND[o.type]}: ${o.reason}`, 'err');
   });
-  es.addEventListener('liquidation', (e) => {
+  es.addEventListener('position', (e) => {
     const p = JSON.parse(e.data);
-    toast(`Likwidacja: ${p.side} ${p.leverage}× ${label(p.symbol)}, wynik ${money(p.pnl, S.rules.account)}`, 'err');
+    const what = { sl: 'Stop loss', tp: 'Take profit', margin: 'Likwidacja' }[p.reason] ?? 'Zamknięto';
+    toast(`${what}: ${p.side} ${p.leverage}× ${label(p.symbol)} zamknięta, wynik ${sign(p.pnl)}${money(p.pnl, S.rules.account)}`, p.pnl >= 0 ? 'ok' : 'err');
   });
   es.addEventListener('mode', (e) => {
     const was = S.market.mode;

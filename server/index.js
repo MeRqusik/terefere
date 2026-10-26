@@ -5,7 +5,7 @@ import zlib from 'node:zlib';
 import { createHash } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 import { createMarket, rateIn, PAIRS, RANGES } from './market.js';
-import { createAccount, placeOrder, cancelOrder, closePosition, matchOrders, available, START, ACCOUNT, FEE, MARGIN_FEE, MAX_LEVERAGE, CLOSE_OUT } from './exchange.js';
+import { createAccount, placeOrder, cancelOrder, closePosition, protectPosition, matchOrders, available, START, ACCOUNT, FEE, MARGIN_FEE, MAX_LEVERAGE, CLOSE_OUT } from './exchange.js';
 
 const root = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(root, '../public');
@@ -50,7 +50,7 @@ market.on('quote', (s, q) => {
   save();
   broadcast('account', accountView());
   for (const o of orders) broadcast('order', o);
-  for (const p of positions) broadcast('liquidation', p);
+  for (const p of positions) broadcast('position', p);
 });
 market.on('mode', (m) => broadcast('mode', m));
 market.on('event', (e) => broadcast('news', e));
@@ -126,6 +126,11 @@ async function api(req, res, url) {
   if (close) {
     const p = account.positions.find((x) => x.id === Number(close[1]));
     return changed(req, res, closePosition(account, Number(close[1]), p && market.quote(p.symbol), rate));
+  }
+  const protect = route.match(/^POST \/api\/positions\/(\d+)\/protect$/);
+  if (protect) {
+    const p = account.positions.find((x) => x.id === Number(protect[1]));
+    return changed(req, res, protectPosition(account, Number(protect[1]), await body(req), p && market.quote(p.symbol)));
   }
   if (route === 'POST /api/reset') {
     account = createAccount();

@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { createAccount, placeOrder, cancelOrder, matchOrders, closePosition, available } from './exchange.js';
+import { createAccount, placeOrder, cancelOrder, matchOrders, closePosition, protectPosition, available } from './exchange.js';
 import { crossQuote, rateIn } from './market.js';
 
 const SYMS = ['EUR_PLN', 'USD_PLN'];
@@ -136,4 +136,46 @@ test('rateIn converts through USD crosses', () => {
   close(rateIn(quotes, 'EUR', 'PLN'), 4.4);
   close(rateIn(quotes, 'JPY', 'PLN'), 4 / 150);
   close(rateIn(quotes, 'PLN', 'PLN'), 1);
+});
+
+test('stop loss closes a long when bid falls to it, take profit closes a short', () => {
+  const acc = createAccount();
+  const long = { symbol: 'EUR_PLN', side: 'buy', type: 'market', amount: 1000, leverage: 10, sl: 4.3, tp: 4.6 };
+  placeOrder(acc, long, SYMS, q(4.39, 4.4), rate);
+  placeOrder(acc, { symbol: 'EUR_PLN', side: 'sell', type: 'market', amount: 1000, leverage: 10, tp: 4.2 }, SYMS, q(4.39, 4.4), rate);
+  const [l, s] = acc.positions;
+  assert.deepEqual([l.sl, l.tp, s.sl, s.tp], [4.3, 4.6, null, 4.2]);
+  assert.equal(matchOrders(acc, 'EUR_PLN', q(4.31, 4.32), rate).positions.length, 0);
+  const [hit] = matchOrders(acc, 'EUR_PLN', q(4.29, 4.3), rate).positions;
+  assert.deepEqual([hit, hit.status, hit.reason, hit.exit], [l, 'closed', 'sl', 4.29]);
+  const [tp] = matchOrders(acc, 'EUR_PLN', q(4.19, 4.2), rate).positions;
+  assert.deepEqual([tp, tp.reason], [s, 'tp']);
+  assert.ok(s.pnl > 0);
+});
+
+test('stop loss and take profit must sit on the right side of the price', () => {
+  const acc = createAccount();
+  const base = { symbol: 'EUR_PLN', type: 'market', amount: 1000, leverage: 10 };
+  assert.throws(() => placeOrder(acc, { ...base, side: 'buy', sl: 4.5 }, SYMS, q(4.39, 4.4), rate), /poniżej/);
+  assert.throws(() => placeOrder(acc, { ...base, side: 'buy', tp: 4.3 }, SYMS, q(4.39, 4.4), rate), /powyżej/);
+  assert.throws(() => placeOrder(acc, { ...base, side: 'sell', sl: 4.3 }, SYMS, q(4.39, 4.4), rate), /powyżej/);
+  assert.throws(() => placeOrder(acc, { ...base, side: 'buy', sl: 'abc' }, SYMS, q(4.39, 4.4), rate), /poprawną/);
+  assert.throws(() => placeOrder(acc, { ...base, leverage: undefined, side: 'buy', sl: 4 }, SYMS, q(4.39, 4.4), rate), /dźwignią/);
+  assert.equal(acc.positions.length, 0);
+  // A limit order is checked against its own price, and passes SL/TP on to the position it opens.
+  placeOrder(acc, { ...base, type: 'limit', price: 4.2, side: 'buy', sl: 4.1, tp: 4.35 }, SYMS, q(4.39, 4.4), rate);
+  matchOrders(acc, 'EUR_PLN', q(4.19, 4.2), rate);
+  assert.deepEqual([acc.positions[0].sl, acc.positions[0].tp], [4.1, 4.35]);
+});
+
+test('protectPosition sets, validates and clears SL/TP on an open position', () => {
+  const acc = createAccount();
+  placeOrder(acc, { symbol: 'EUR_PLN', side: 'sell', type: 'market', amount: 1000, leverage: 5 }, SYMS, q(4.39, 4.4), rate);
+  const [p] = acc.positions;
+  assert.throws(() => protectPosition(acc, p.id, { sl: 4.3 }, q(4.39, 4.4)), /powyżej/);
+  protectPosition(acc, p.id, { sl: 4.5, tp: 4.1 }, q(4.39, 4.4));
+  assert.deepEqual([p.sl, p.tp], [4.5, 4.1]);
+  protectPosition(acc, p.id, { sl: '', tp: 4.2 }, q(4.39, 4.4));
+  assert.deepEqual([p.sl, p.tp], [null, 4.2]);
+  assert.throws(() => protectPosition(acc, 999, {}, q(4.39, 4.4)));
 });

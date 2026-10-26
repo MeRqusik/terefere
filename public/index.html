@@ -162,6 +162,10 @@
             <div class="lev-head"><label for="levIn">Dźwignia</label><output id="levOut" for="levIn">10×</output></div>
             <input type="range" id="levIn" min="1" max="100" value="10">
             <div class="lev-marks"><button type="button" data-lev="1">1×</button><button type="button" data-lev="10">10×</button><button type="button" data-lev="25">25×</button><button type="button" data-lev="50">50×</button><button type="button" data-lev="100">100×</button></div>
+            <div class="protect">
+              <label class="field"><span>Stop loss <em id="slHint" class="down"></em></span><div class="input"><input id="slIn" inputmode="decimal" placeholder="brak" autocomplete="off"></div></label>
+              <label class="field"><span>Take profit <em id="tpHint" class="up"></em></span><div class="input"><input id="tpIn" inputmode="decimal" placeholder="brak" autocomplete="off"></div></label>
+            </div>
           </div>
         </div>
         <dl class="rows summary" id="summary"></dl>

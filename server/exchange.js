@@ -8,6 +8,17 @@ export const START = { PLN: 100000 };
 const SIDES = ['buy', 'sell'];
 const TYPES = ['market', 'limit', 'stop'];
 const round = (x) => Math.round(x * 1e8) / 1e8;
+const optional = (v) => (v === null || v === undefined || v === '' ? null : Number(v));
+
+// Stop loss sits on the losing side of the reference price, take profit on the winning side.
+function protection(long, ref, input) {
+  const sl = optional(input?.sl);
+  const tp = optional(input?.tp);
+  for (const [v, name] of [[sl, 'Stop loss'], [tp, 'Take profit']]) if (v !== null && !(Number.isFinite(v) && v > 0)) throw new Error(`${name}: podaj poprawną cenę`);
+  if (sl !== null && (long ? sl >= ref : sl <= ref)) throw new Error(`Stop loss dla ${long ? 'long' : 'short'} musi być ${long ? 'poniżej' : 'powyżej'} ceny`);
+  if (tp !== null && (long ? tp <= ref : tp >= ref)) throw new Error(`Take profit dla ${long ? 'long' : 'short'} musi być ${long ? 'powyżej' : 'poniżej'} ceny`);
+  return { sl, tp };
+}
 
 export const createAccount = () => ({ balances: { ...START }, orders: [], positions: [], seq: 0 });
 
@@ -48,7 +59,7 @@ function fill(acc, o, q, rate, now) {
     b[ACCOUNT] = round((b[ACCOUNT] || 0) - margin - fee);
     acc.positions.push({
       id: o.id, symbol: o.symbol, side: o.side === 'buy' ? 'long' : 'short', amount: o.amount, leverage: o.leverage,
-      entry: px, margin: round(margin), fee: round(fee), status: 'open', openedAt: now,
+      entry: px, margin: round(margin), fee: round(fee), sl: o.sl ?? null, tp: o.tp ?? null, status: 'open', openedAt: now,
     });
     return Object.assign(o, { status: 'filled', fillPrice: px, fee: round(fee), closedAt: now });
   }
@@ -80,9 +91,12 @@ export function placeOrder(acc, input, symbols, quote, rate = noRate, now = Date
   if (price !== null && (!Number.isFinite(price) || price <= 0)) throw new Error('Podaj poprawną cenę');
   if (leverage !== null && !(Number.isInteger(leverage) && leverage >= 1 && leverage <= MAX_LEVERAGE)) throw new Error(`Dźwignia od 1 do ${MAX_LEVERAGE}`);
   if (!quote) throw new Error('Brak notowań dla tej pary');
+  const wantsProtection = optional(input?.sl) !== null || optional(input?.tp) !== null;
+  if (wantsProtection && !leverage) throw new Error('Stop loss i take profit są dla pozycji z dźwignią');
 
   const o = { id: ++acc.seq, symbol, side, type, amount, price, status: 'open', createdAt: now };
   if (leverage) o.leverage = leverage;
+  if (wantsProtection) Object.assign(o, protection(side === 'buy', price ?? (side === 'buy' ? quote.ask : quote.bid), input));
   if (type === 'market') {
     fill(acc, o, quote, rate, now);
     if (o.status !== 'filled') throw new Error(o.reason === 'Brak środków w chwili realizacji' ? 'Za mało środków' : o.reason);
@@ -111,12 +125,12 @@ export function positionPnl(p, q, rate) {
   return { exit, pnl: (p.side === 'long' ? exit - p.entry : p.entry - exit) * p.amount * rate(p.symbol.split('_')[1]) };
 }
 
-function settle(acc, p, q, rate, now, status) {
+function settle(acc, p, q, rate, now, status, reason = 'manual') {
   const { exit, pnl } = positionPnl(p, q, rate);
   const fee = p.amount * exit * rate(p.symbol.split('_')[1]) * MARGIN_FEE;
   const back = Math.max(0, p.margin + pnl - fee); // negative balance protection: you never lose more than the margin
   acc.balances[ACCOUNT] = round((acc.balances[ACCOUNT] || 0) + back);
-  return Object.assign(p, { status, exit, closeFee: round(fee), pnl: round(back - p.margin - p.fee), closedAt: now });
+  return Object.assign(p, { status, reason, exit, closeFee: round(fee), pnl: round(back - p.margin - p.fee), closedAt: now });
 }
 
 export function closePosition(acc, id, q, rate, now = Date.now()) {
@@ -131,13 +145,28 @@ const triggered = (o, q) =>
     ? o.type === 'limit' ? q.ask <= o.price : q.ask >= o.price
     : o.type === 'limit' ? q.bid >= o.price : q.bid <= o.price;
 
-// Called on every quote: fills triggered orders, then liquidates positions that hit the close-out level.
+// Called on every quote: fills triggered orders, then closes positions at their stop loss, take profit or close-out level.
 export function matchOrders(acc, symbol, q, rate = noRate, now = Date.now()) {
   const orders = acc.orders
     .filter((o) => o.status === 'open' && o.symbol === symbol && triggered(o, q))
     .map((o) => fill(acc, o, q, rate, now));
-  const positions = acc.positions
-    .filter((p) => p.status === 'open' && p.symbol === symbol && p.margin + positionPnl(p, q, rate).pnl <= p.margin * CLOSE_OUT)
-    .map((p) => settle(acc, p, q, rate, now, 'liquidated'));
+  const positions = [];
+  for (const p of acc.positions) {
+    if (p.status !== 'open' || p.symbol !== symbol) continue;
+    const { exit, pnl } = positionPnl(p, q, rate);
+    const long = p.side === 'long';
+    if (p.sl != null && (long ? exit <= p.sl : exit >= p.sl)) positions.push(settle(acc, p, q, rate, now, 'closed', 'sl'));
+    else if (p.tp != null && (long ? exit >= p.tp : exit <= p.tp)) positions.push(settle(acc, p, q, rate, now, 'closed', 'tp'));
+    else if (p.margin + pnl <= p.margin * CLOSE_OUT) positions.push(settle(acc, p, q, rate, now, 'liquidated', 'margin'));
+  }
   return { orders, positions };
+}
+
+// Sets or clears (empty value) the stop loss and take profit of an open position, checked against its current exit price.
+export function protectPosition(acc, id, input, q) {
+  const p = acc.positions.find((x) => x.id === id && x.status === 'open');
+  if (!p) throw new Error('Nie ma takiej otwartej pozycji');
+  if (!q) throw new Error('Brak notowań dla tej pary');
+  const long = p.side === 'long';
+  return Object.assign(p, protection(long, long ? q.bid : q.ask, input));
 }

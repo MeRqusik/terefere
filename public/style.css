@@ -282,6 +282,30 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
 .link { display: flex; align-items: center; justify-content: center; gap: 6px; border: 0; background: none; color: var(--muted); font-size: 12px; padding: 8px 4px 0; border-top: 1px solid var(--line); }
 .link:hover { color: var(--text); }
 
+/* Stop loss / take profit */
+.protect { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.protect .field { min-width: 0; }
+.protect .field > span { display: flex; flex-wrap: wrap; justify-content: space-between; gap: 0 6px; }
+.protect .input input { width: 0; }
+.protect .field em { font-style: normal; font-size: 11.5px; }
+.protect .input { height: 38px; }
+.sltp { grid-column: 1 / -1; display: flex; flex-wrap: wrap; align-items: center; gap: 8px 22px; padding-top: 12px; border-top: 1px solid var(--line-soft); font-size: 12.5px; color: var(--muted); }
+.sltp b { color: var(--text); font-weight: 500; margin-left: 4px; }
+.sltp .set { margin-left: auto; }
+.sltp label { display: flex; align-items: center; gap: 8px; }
+.sltp input { width: 112px; height: 32px; padding: 0 10px; background: var(--field); border: 1px solid var(--line); border-radius: 8px; outline: 0; font-size: 13px; }
+.sltp input:focus { border-color: #4a4b52; }
+.sltp .actions { margin-left: auto; display: flex; gap: 6px; }
+.btn-ghost.ok:hover { border-color: var(--green); color: var(--green); background: var(--green-soft); }
+.badge.sl { background: var(--red-soft); color: var(--red); }
+.badge.tp { background: var(--green-soft); color: var(--green); }
+.tbl td small { display: block; color: var(--muted); font-size: 11px; }
+
+/* Rail target highlight */
+.flash { animation: flash 1.1s var(--ease); }
+@keyframes flash { from { box-shadow: 0 0 0 2px var(--green); } to { box-shadow: 0 0 0 2px transparent; } }
+.activity { border-radius: var(--r-lg); }
+
 /* Toasts */
 .toasts { position: fixed; right: 20px; bottom: 20px; display: flex; flex-direction: column; gap: 8px; z-index: 50; pointer-events: none; }
 .toast { display: flex; gap: 10px; align-items: flex-start; background: var(--raise); border: 1px solid #36373d; border-radius: var(--r-md); padding: 10px 14px; max-width: 360px; box-shadow: 0 12px 30px rgba(0, 0, 0, .45); animation: toast-in .25s var(--ease); }
@@ -299,28 +323,31 @@ h1, h2, h3 { margin: 0; font-weight: 600; }
   .search kbd { display: none; }
 }
 @media (max-width: 1240px) {
+  .app { grid-template-columns: 52px minmax(0, 1fr) 300px; }
   .pos { grid-template-columns: minmax(0, 1fr); }
 }
-@media (max-width: 1080px) {
-  .app { grid-template-columns: 52px minmax(0, 1fr); }
-  .side { grid-column: 2; display: grid; grid-template-columns: 1fr 1fr; align-items: start; }
-}
-@media (max-width: 760px) {
-  .app { display: flex; flex-direction: column; padding: 12px 14px 20px; gap: 12px; }
+/* Below this the trade panel no longer fits beside the chart: one column, trade form right after the chart. */
+@media (max-width: 920px) {
+  .app { display: flex; flex-direction: column; gap: 12px; }
   .main, .side { display: contents; }
   .rail { display: none; }
+  .strip { order: 1; }
+  .ticker { order: 2; }
+  .chart-card { order: 3; }
+  .trade { order: 4; }
+  .activity { order: 5; }
+  .account { order: 6; }
+}
+@media (max-width: 760px) {
+  .app { padding: 12px 14px 20px; }
   .top { flex-wrap: wrap; gap: 10px; }
   .brand { margin-right: 0; }
   .brand span { display: none; }
   .search { order: 5; flex-basis: 100%; max-width: none; }
   .user, .pill { display: none; }
   .mode button { padding: 0 9px; }
-  .strip { order: 1; scrollbar-width: none; }
-  .ticker { order: 2; padding: 12px 14px; }
-  .chart-card { order: 3; }
-  .trade { order: 4; }
-  .activity { order: 5; }
-  .account { order: 6; }
+  .strip { scrollbar-width: none; }
+  .ticker { padding: 12px 14px; }
   .chart-wrap { height: 300px; }
   .ranges { margin-left: 0; }
   .cols { grid-template-columns: repeat(2, minmax(0, 1fr)); }
