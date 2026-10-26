@@ -3,11 +3,14 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#121315">
   <title>terefere · giełda walut</title>
   <link rel="icon" href="/favicon.svg">
+  <link rel="modulepreload" href="/vendor/lightweight-charts.mjs">
+  <link rel="modulepreload" href="/candles.js">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" onload="this.rel='stylesheet'">
   <link rel="stylesheet" href="/style.css">
   <script type="module" src="/app.js"></script>
 </head>
@@ -22,22 +25,25 @@
     <symbol id="i-chevron" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
     <symbol id="i-x" viewBox="0 0 24 24"><path d="M18 6 6 18M6 6l12 12"/></symbol>
     <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
+    <symbol id="i-up" viewBox="0 0 24 24"><path d="M7 17 17 7M8 7h9v9"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="M7 7l10 10M17 8v9H8"/></symbol>
   </svg>
 
   <div class="app">
     <header class="top">
-      <a class="brand" href="/" aria-label="terefere">
+      <a class="brand" href="/" aria-label="terefere, strona główna">
         <svg viewBox="0 0 32 32" aria-hidden="true"><circle cx="16" cy="16" r="13" /><path d="M16 9a7 7 0 1 0 7 7" /><circle cx="16" cy="16" r="2.4" class="fill" /></svg>
         <span>TEREFERE</span>
       </a>
       <div class="search">
         <svg class="ico"><use href="#i-search"/></svg>
         <input id="search" type="search" placeholder="Szukaj waluty lub pary" autocomplete="off" aria-label="Szukaj pary walutowej">
+        <kbd>/</kbd>
         <div class="dropdown" id="searchList" hidden></div>
       </div>
       <div class="mode" role="group" aria-label="Źródło notowań">
-        <button data-mode="live" class="on"><i class="pulse"></i>Na żywo</button>
-        <button data-mode="sim">Symulacja</button>
+        <button data-mode="live" class="on" aria-pressed="true"><i class="pulse"></i>Na żywo</button>
+        <button data-mode="sim" aria-pressed="false">Symulacja</button>
         <select id="volatility" aria-label="Zmienność symulacji" hidden>
           <option value="1">Zmienność 1×</option>
           <option value="3">Zmienność 3×</option>
@@ -49,14 +55,9 @@
           <button class="icon-btn" id="bell" aria-label="Powiadomienia"><svg class="ico"><use href="#i-bell"/></svg><i class="dot" hidden></i></button>
           <div class="dropdown right" id="notes" hidden></div>
         </div>
-        <div class="pill" title="Wartość portfela"><svg class="ico"><use href="#i-wallet"/></svg><b id="total">—</b></div>
-        <label class="pill select">
-          <span class="coin sm" id="dispCoin"></span>
-          <select id="display" aria-label="Waluta wyceny"><option>PLN</option><option>USD</option><option>EUR</option></select>
-          <svg class="ico sm"><use href="#i-chevron"/></svg>
-        </label>
+        <a class="pill" href="#account" title="Wartość konta"><svg class="ico"><use href="#i-wallet"/></svg><b id="total">—</b></a>
         <div class="user">
-          <div class="avatar">T</div>
+          <div class="avatar" aria-hidden="true">T</div>
           <div><b>Trader demo</b><small>Konto symulacyjne</small></div>
         </div>
       </div>
@@ -64,9 +65,9 @@
 
     <nav class="rail" aria-label="Sekcje">
       <div class="rail-group">
-        <a href="#market" class="on" aria-label="Rynek"><svg class="ico"><use href="#i-chart"/></svg></a>
-        <a href="#orders" aria-label="Zlecenia"><svg class="ico"><use href="#i-list"/></svg></a>
-        <a href="#wallet" aria-label="Portfel"><svg class="ico"><use href="#i-wallet"/></svg></a>
+        <a href="#market" class="on" aria-label="Rynek" title="Rynek"><svg class="ico"><use href="#i-chart"/></svg></a>
+        <a href="#activity" aria-label="Pozycje i zlecenia" title="Pozycje i zlecenia"><svg class="ico"><use href="#i-list"/></svg></a>
+        <a href="#account" aria-label="Konto" title="Konto"><svg class="ico"><use href="#i-wallet"/></svg></a>
       </div>
       <div class="rail-group">
         <button id="railSim" aria-label="Przełącz symulację rynku" title="Symulacja rynku"><svg class="ico"><use href="#i-zap"/></svg></button>
@@ -74,37 +75,40 @@
     </nav>
 
     <main class="main">
-      <section class="card ticker" id="market">
-        <div class="pair-pick">
-          <button id="pairBtn" class="pair-btn" aria-haspopup="listbox">
-            <span class="coins" id="pairCoins"></span>
-            <b id="pairName">—</b>
-            <svg class="ico sm"><use href="#i-chevron"/></svg>
-            <span class="price" id="price">—</span>
-          </button>
-          <div class="sub"><span id="pairLong">—</span><span id="modeTag">Spot</span></div>
-          <div class="dropdown" id="pairList" hidden></div>
+      <nav class="strip" id="strip" aria-label="Pary walutowe"></nav>
+
+      <section class="card ticker" id="market" aria-label="Notowanie wybranej pary">
+        <div class="pair-id">
+          <span class="coins" id="pairCoins"></span>
+          <div>
+            <h1 id="pairName">—</h1>
+            <span class="sub" id="pairLong">—</span>
+          </div>
+        </div>
+        <div class="price-box">
+          <span class="price" id="price">—</span>
+          <span class="tag" id="modeTag">Na żywo · LSE</span>
         </div>
         <dl class="stats">
           <div><dt>Bid</dt><dd id="bid">—</dd></div>
           <div><dt>Ask</dt><dd id="ask">—</dd></div>
-          <div><dt>Zmiana 24h</dt><dd id="change">—</dd></div>
-          <div><dt>Maks. / Min. 24h</dt><dd id="hilo">—</dd></div>
-          <div><dt>Spread / Transakcje 24h</dt><dd id="spread">—</dd></div>
+          <div><dt>Spread</dt><dd id="spread">—</dd></div>
+          <div><dt>Zmiana dziś</dt><dd id="change">—</dd></div>
+          <div><dt>Min. – maks. dziś</dt><dd id="hilo">—</dd></div>
         </dl>
       </section>
 
-      <section class="card chart-card">
+      <section class="card chart-card" aria-label="Wykres">
         <div class="toolbar">
-          <div class="seg" role="tablist">
-            <button data-view="chart" class="on">Wykres</button>
-            <button data-view="book">Głębokość</button>
+          <div class="seg" role="tablist" aria-label="Widok">
+            <button data-view="chart" class="on" role="tab" aria-selected="true">Wykres</button>
+            <button data-view="book" role="tab" aria-selected="false">Głębokość</button>
           </div>
-          <div class="seg green" id="styleSeg">
-            <button data-style="candle" class="on">Świece</button>
-            <button data-style="line">Linia</button>
+          <div class="seg" id="styleSeg" aria-label="Typ wykresu">
+            <button data-style="candle" class="on" aria-pressed="true">Świece</button>
+            <button data-style="line" aria-pressed="false">Linia</button>
           </div>
-          <div class="ranges" id="ranges"></div>
+          <div class="ranges" id="ranges" aria-label="Zakres"></div>
         </div>
         <div class="chart-wrap">
           <div id="chart"></div>
@@ -113,68 +117,78 @@
         </div>
       </section>
 
-      <section class="orders" id="orders">
-        <div class="orders-head">
-          <label class="pill select">
-            <select id="orderFilter" aria-label="Filtr zleceń">
-              <option value="all">Wszystkie zlecenia</option>
-              <option value="open">Oczekujące</option>
-              <option value="filled">Zrealizowane</option>
-              <option value="cancelled">Anulowane</option>
-            </select>
-            <svg class="ico sm"><use href="#i-chevron"/></svg>
-          </label>
-          <label class="check"><input type="checkbox" id="onlyPair"> Tylko bieżąca para</label>
+      <section class="activity" id="activity" aria-label="Twoje pozycje i zlecenia">
+        <div class="activity-head">
+          <div class="tabs" role="tablist" aria-label="Aktywność">
+            <button role="tab" data-tab="positions" class="on" aria-selected="true">Pozycje <span class="count" id="cPositions">0</span></button>
+            <button role="tab" data-tab="orders" aria-selected="false">Zlecenia <span class="count" id="cOrders">0</span></button>
+            <button role="tab" data-tab="history" aria-selected="false">Historia</button>
+          </div>
+          <label class="check"><input type="checkbox" id="onlyPair"> Tylko ta para</label>
         </div>
-        <div id="orderList" class="order-list"></div>
+        <div id="activityBody" role="tabpanel"></div>
       </section>
     </main>
 
     <aside class="side">
-      <form class="card trade" id="trade" novalidate>
-        <div class="seg big sides">
-          <button type="button" data-side="buy" class="on">Kup</button>
-          <button type="button" data-side="sell">Sprzedaj</button>
+      <form class="card trade" id="trade" novalidate aria-label="Nowe zlecenie">
+        <div class="seg big kinds" role="tablist" aria-label="Rodzaj handlu">
+          <button type="button" data-kind="spot" class="on" role="tab" aria-selected="true">Spot</button>
+          <button type="button" data-kind="margin" role="tab" aria-selected="false">Dźwignia</button>
         </div>
-        <div class="seg types">
-          <button type="button" data-type="market" class="on">Rynkowe</button>
-          <button type="button" data-type="limit">Limit</button>
-          <button type="button" data-type="stop">Stop</button>
+        <div class="seg big sides">
+          <button type="button" data-side="buy" class="on" aria-pressed="true"><svg class="ico sm"><use href="#i-up"/></svg><span>Kup</span></button>
+          <button type="button" data-side="sell" aria-pressed="false"><svg class="ico sm"><use href="#i-down"/></svg><span>Sprzedaj</span></button>
+        </div>
+        <div class="seg types" aria-label="Typ zlecenia">
+          <button type="button" data-type="market" class="on" aria-pressed="true">Rynkowe</button>
+          <button type="button" data-type="limit" aria-pressed="false">Limit</button>
+          <button type="button" data-type="stop" aria-pressed="false">Stop</button>
         </div>
         <div class="inner">
-          <label class="field" id="priceField">
-            <span id="priceLabel">Cena</span>
+          <label class="field">
+            <span id="priceLabel">Cena rynkowa</span>
             <div class="input"><input id="priceIn" inputmode="decimal" autocomplete="off"><em id="priceCcy"></em></div>
           </label>
           <label class="field">
             <span>Ilość</span>
             <div class="input"><input id="amountIn" inputmode="decimal" placeholder="0" autocomplete="off"><em id="amountCcy"></em></div>
           </label>
-          <div class="avail">Dostępne: <b id="avail">—</b></div>
-          <div class="pcts">
+          <div class="pcts" aria-label="Część dostępnych środków">
             <button type="button" data-pct="25">25%</button><button type="button" data-pct="50">50%</button><button type="button" data-pct="75">75%</button><button type="button" data-pct="100">Max</button>
           </div>
+          <div class="avail"><span id="availLabel">Dostępne</span><b id="avail">—</b></div>
+          <div class="lev" id="levBlock" hidden>
+            <div class="lev-head"><label for="levIn">Dźwignia</label><output id="levOut" for="levIn">10×</output></div>
+            <input type="range" id="levIn" min="1" max="100" value="10">
+            <div class="lev-marks"><button type="button" data-lev="1">1×</button><button type="button" data-lev="10">10×</button><button type="button" data-lev="25">25×</button><button type="button" data-lev="50">50×</button><button type="button" data-lev="100">100×</button></div>
+          </div>
         </div>
-        <dl class="summary">
-          <div><dt>Kurs</dt><dd id="sumRate">—</dd></div>
-          <div><dt>Wartość</dt><dd id="sumValue">—</dd></div>
-          <div><dt>Prowizja 0,1%</dt><dd id="sumFee">—</dd></div>
-          <div><dt id="sumNetLabel">Zapłacisz</dt><dd id="sumNet">—</dd></div>
-        </dl>
+        <dl class="rows summary" id="summary"></dl>
         <p class="form-err" id="formErr" role="alert"></p>
         <button class="cta" id="submit" type="submit">Kup</button>
+        <p class="hint" id="hint"></p>
       </form>
 
-      <section class="card wallet" id="wallet">
-        <div class="wallet-head">
-          <h2>Portfel</h2>
-          <button class="link" id="reset" type="button"><svg class="ico sm"><use href="#i-reset"/></svg>Reset</button>
+      <section class="card account" id="account" aria-labelledby="accTitle">
+        <div class="acc-head">
+          <h2 id="accTitle">Konto</h2>
+          <label class="mini-select">Wycena
+            <select id="display"><option>PLN</option><option>USD</option><option>EUR</option></select>
+            <svg class="ico sm"><use href="#i-chevron"/></svg>
+          </label>
         </div>
-        <dl class="summary" id="walletRows"></dl>
-        <dl class="summary totals">
-          <div><dt>Wartość portfela</dt><dd id="wTotal">—</dd></div>
-          <div><dt>Wynik od startu</dt><dd id="wPnl">—</dd></div>
-        </dl>
+        <div class="acc-value"><b id="wTotal">—</b><span id="wPnl"></span></div>
+        <h3>Waluty</h3>
+        <dl class="rows" id="walletRows"></dl>
+        <div id="marginBox" hidden>
+          <h3>Pozycje z dźwignią</h3>
+          <dl class="rows">
+            <div><dt>Depozyt w pozycjach</dt><dd id="mMargin">—</dd></div>
+            <div><dt>Wynik niezrealizowany</dt><dd id="mPnl">—</dd></div>
+          </dl>
+        </div>
+        <button class="link" id="reset" type="button"><svg class="ico sm"><use href="#i-reset"/></svg>Zacznij od nowa ze 100 000 PLN</button>
       </section>
     </aside>
   </div>
